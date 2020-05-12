@@ -3,7 +3,7 @@ from functools import partial
 import numpy.linalg as npla
 from .numpy_wrapper import wrap_namespace
 from . import numpy_wrapper as anp
-from autograd.extend import defvjp
+from autograd.extend import defvjp, defjvp
 
 wrap_namespace(npla.__dict__, globals())
 
@@ -41,12 +41,30 @@ defvjp(inv, grad_inv)
 
 def grad_pinv(ans, x):
     # https://mathoverflow.net/questions/25778/analytical-formula-for-numerical-derivative-of-the-matrix-pseudo-inverse
+    # return lambda g: T(
+    #     -_dot(_dot(ans, T(g)), ans)
+    #     + _dot(_dot(_dot(ans, T(ans)), g), anp.eye(x.shape[-2]) - _dot(x,ans))
+    #     + _dot(_dot(_dot(anp.eye(ans.shape[-2]) - _dot(ans,x), g), T(ans)), ans)
+    #     )
     return lambda g: T(
         -_dot(_dot(ans, T(g)), ans)
-        + _dot(_dot(_dot(ans, T(ans)), g), anp.eye(x.shape[-2]) - _dot(x,ans))
-        + _dot(_dot(_dot(anp.eye(ans.shape[-2]) - _dot(ans,x), g), T(ans)), ans)
+        + _dot(_dot(ans, T(ans)), g)
+        - _dot(_dot(_dot(_dot(ans, T(ans)), g), x),ans)
         )
 defvjp(pinv, grad_pinv)
+
+def fwd_grad_pinv(g, ans, A):
+    # ans is pinv(A)
+    #return (-_dot(_dot(ans, g), ans) + 
+    #        _dot(_dot(_dot(ans, T(ans)), T(g)), (anp.eye(A.shape[-2]) - _dot(A, ans))) + 
+    #        _dot(_dot(_dot((anp.eye(A.shape[-1]) - _dot(ans, A)), T(g)), T(ans)), ans))
+    return (-_dot(_dot(ans, g), ans) + 
+            _dot(_dot(ans, T(ans)), T(g)) - 
+            _dot(_dot(_dot(_dot(ans, T(ans)), T(g)), A), ans)) # + 
+            # _dot(_dot(T(g), T(ans)), ans) -
+            # _dot(_dot(_dot(_dot(ans, A), T(g)), T(ans)), ans))
+
+defjvp(pinv, fwd_grad_pinv)
 
 def grad_solve(argnum, ans, a, b):
     updim = lambda x: x if x.ndim == a.ndim else x[...,None]
@@ -55,6 +73,14 @@ def grad_solve(argnum, ans, a, b):
     else:
         return lambda g: solve(T(a), g)
 defvjp(solve, partial(grad_solve, 0), partial(grad_solve, 1))
+
+def fwd_grad_solve_0(g, ans, a, b):
+    return -solve(a, anp.dot(g, ans))
+
+def fwd_grad_solve_1(g, ans, a, b):
+    return solve(a, g)
+
+defjvp(solve, fwd_grad_solve_0, fwd_grad_solve_1)
 
 def grad_norm(ans, x, ord=None, axis=None):
     def check_implemented():
